@@ -1,0 +1,440 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Mi Aplicación - Carga IA</title>
+
+    <!-- Tailwind CSS for utility classes on the avatar -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Three.js library for the 3D avatar rendering -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+    <style>
+        body, html {
+            margin: 0;
+            padding: 0;
+            height: 100%;
+            overflow: hidden;
+            background-color: #f8fafc; /* Match a clean background */
+            font-family: system-ui, -apple-system, sans-serif;
+        }
+        
+        /* Pantalla de carga superpuesta */
+        #loader-wrapper {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: #f8fafc;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            z-index: 9999;
+            transition: opacity 0.6s ease-in-out, visibility 0.6s ease-in-out;
+        }
+
+        .cargando-texto {
+            margin-top: 40px;
+            color: #0ea5e9; /* Tailwind sky-500 */
+            font-weight: 600;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            font-size: 0.875rem;
+            animation: pulse-text 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+
+        /* Animaciones para el Avatar 3D */
+        @keyframes float { 
+            0% { transform: translateY(0px); } 
+            50% { transform: translateY(-15px); } 
+            100% { transform: translateY(0px); } 
+        }
+        .animate-float { animation: float 4s ease-in-out infinite; }
+        
+        @keyframes palpitate { 
+            0% { transform: scale(1); opacity: 0.15; } 
+            50% { transform: scale(1.15); opacity: 0.6; } 
+            100% { transform: scale(1); opacity: 0.15; } 
+        }
+        .animate-palpitate { animation: palpitate 3.5s ease-in-out infinite; }
+
+        @keyframes pulse-text {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
+
+        /* Contenedor principal de la app (Iframe) */
+        .contenedor-app {
+            width: 100%;
+            height: 100vh;
+            position: relative;
+            overflow: hidden;
+        }
+        .contenedor-app iframe {
+            position: absolute;
+            top: -45px; 
+            left: 0;
+            width: 100%;
+            height: calc(100vh + 45px);
+            border: none;
+        }
+    </style>
+
+    <script id="sphereVertexShader" type="x-shader/x-vertex">
+        varying vec2 vUv;
+        varying vec3 vNormal;
+        varying vec3 vPosition;
+        void main() {
+            vUv = uv;
+            vNormal = normalize(normalMatrix * normal);
+            vPosition = position;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+
+    <script id="sphereFragmentShader" type="x-shader/x-fragment">
+        uniform float time;
+        varying vec2 vUv;
+        varying vec3 vNormal;
+        varying vec3 vPosition;
+
+        vec4 permute(vec4 x){return mod(((x*34.0)+1.0)*x, 289.0);}
+        vec4 taylorInvSqrt(vec4 r){return 1.79284291400159 - 0.85373472095314 * r;}
+        float snoise(vec3 v){
+            const vec2 C = vec2(1.0/6.0, 1.0/3.0);
+            const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+            vec3 i  = floor(v + dot(v, C.yyy));
+            vec3 x0 = v - i + dot(i, C.xxx);
+            vec3 g = step(x0.yzx, x0.xyz);
+            vec3 l = 1.0 - g;
+            vec3 i1 = min( g.xyz, l.zxy );
+            vec3 i2 = max( g.xyz, l.zxy );
+            vec3 x1 = x0 - i1 + 1.0 * C.xxx;
+            vec3 x2 = x0 - i2 + 2.0 * C.xxx;
+            vec3 x3 = x0 - 1.0 + 3.0 * C.xxx;
+            i = mod(i, 289.0);
+            vec4 p = permute( permute( permute(
+                        i.z + vec4(0.0, i1.z, i2.z, 1.0 ))
+                      + i.y + vec4(0.0, i1.y, i2.y, 1.0 ))
+                      + i.x + vec4(0.0, i1.x, i2.x, 1.0 ));
+            float n_ = 1.0/7.0;
+            vec3  ns = n_ * D.wyz - D.xzx;
+            vec4 j = p - 49.0 * floor(p * ns.z *ns.z);
+            vec4 x_ = floor(j * ns.z);
+            vec4 y_ = floor(j - 7.0 * x_ );
+            vec4 x = x_ *ns.x + ns.yyyy;
+            vec4 y = y_ *ns.x + ns.yyyy;
+            vec4 h = 1.0 - abs(x) - abs(y);
+            vec4 b0 = vec4( x.xy, y.xy );
+            vec4 b1 = vec4( x.zw, y.zw );
+            vec4 s0 = floor(b0)*2.0 + 1.0;
+            vec4 s1 = floor(b1)*2.0 + 1.0;
+            vec4 sh = -step(h, vec4(0.0));
+            vec4 a0 = b0.xzyw + s0.xzyw*sh.xxyy ;
+            vec4 a1 = b1.xzyw + s1.xzyw*sh.zzww ;
+            vec3 p0 = vec3(a0.xy,h.x);
+            vec3 p1 = vec3(a0.zw,h.y);
+            vec3 p2 = vec3(a1.xy,h.z);
+            vec3 p3 = vec3(a1.zw,h.w);
+            vec4 norm = taylorInvSqrt(vec4(dot(p0,p0), dot(p1,p1), dot(p2, p2), dot(p3,p3)));
+            p0 *= norm.x; p1 *= norm.y; p2 *= norm.z; p3 *= norm.w;
+            vec4 m = max(0.6 - vec4(dot(x0,x0), dot(x1,x1), dot(x2,x2), dot(x3,x3)), 0.0);
+            m = m * m;
+            return 42.0 * dot( m*m, vec4( dot(p0,x0), dot(p1,x1), dot(p2,x2), dot(p3,x3) ) );
+        }
+        float fbm(vec3 p) {
+            float value = 0.0; float amplitude = 0.5;
+            for (int i = 0; i < 4; i++) {
+                value += amplitude * snoise(p);
+                p *= 2.0; amplitude *= 0.5;
+            }
+            return value;
+        }
+        void main() {
+            vec3 pos = normalize(vPosition);
+            vec3 movement = vec3(time * 0.05, -time * 0.08, time * 0.03);
+            float n1 = fbm(pos * 2.5 + movement);
+            float n2 = fbm(pos * 5.0 - movement * 1.5 + vec3(n1));
+            float n = fbm(pos * 3.5 + vec3(n1, n2, n1) * 2.0 + movement);
+
+            vec3 colorDarkBlue = vec3(0.0, 0.4, 1.0);  
+            vec3 colorLightBlue = vec3(0.5, 0.8, 1.0);
+            vec3 colorWhite = vec3(1.0, 1.0, 1.0);    
+            vec3 colorCream = vec3(0.95, 0.98, 1.0);  
+
+            vec3 lightDir = normalize(vec3(-1.0, 1.0, 1.0));
+            float gradientMap = dot(vNormal, lightDir) * 0.5 + 0.5;
+            vec3 baseColor = mix(colorDarkBlue, colorWhite, smoothstep(0.1, 1.1, gradientMap));
+
+            float cloudIntensity = smoothstep(-0.2, 0.6, n);
+            vec3 finalColor = mix(baseColor, colorCream, cloudIntensity);
+            
+            float rimLight = pow(1.0 - max(dot(vNormal, vec3(0.0, 0.0, 1.0)), 0.0), 2.5);
+            finalColor += colorLightBlue * rimLight * 0.6;
+            gl_FragColor = vec4(finalColor, 1.0);
+        }
+    </script>
+
+    <script id="ringVertexShader" type="x-shader/x-vertex">
+        varying vec3 vPos;
+        void main() {
+            vPos = position;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    </script>
+
+    <script id="ringFragmentShader" type="x-shader/x-fragment">
+        uniform float time;
+        varying vec3 vPos;
+        void main() {
+            float dist = length(vPos.xy); 
+            float innerR = 4.2; float outerR = 7.5;
+            float nDist = (dist - innerR) / (outerR - innerR); 
+            if(nDist < 0.0 || nDist > 1.0) discard;
+            float bands = sin(nDist * 40.0) * 0.5 + 0.5;
+            bands *= sin(nDist * 15.0 - time * 0.2) * 0.5 + 0.5;
+            bands += sin(nDist * 100.0) * 0.1; 
+            float alpha = smoothstep(0.0, 0.05, nDist) * (1.0 - smoothstep(0.95, 1.0, nDist));
+            alpha *= (bands * 0.7 + 0.15); 
+            vec3 colorDarkBlue = vec3(0.1, 0.3, 0.8);  
+            vec3 colorLightBlue = vec3(0.6, 0.9, 1.0); 
+            vec3 colorWhite = vec3(1.0, 1.0, 1.0);
+            vec3 finalColor = mix(colorDarkBlue, colorLightBlue, nDist + bands*0.2);
+            finalColor = mix(finalColor, colorWhite, pow(bands, 2.0) * 1.6); 
+            gl_FragColor = vec4(finalColor, alpha);
+        }
+    </script>
+</head>
+<body>
+    <!-- Pantalla de carga superpuesta con el Avatar 3D -->
+    <div id="loader-wrapper">
+        <div id="orb-trigger" class="relative flex items-center justify-center animate-float w-[200px] h-[200px] select-none">
+            <!-- Halo palpitante exterior -->
+            <div class="absolute inset-[-15px] rounded-full border-[3px] border-dotted border-sky-400 animate-palpitate pointer-events-none"></div>
+            <!-- Contenedor del Canvas 3D -->
+            <div id="jose-3d-canvas" class="w-full h-full relative z-10 pointer-events-none"></div>
+        </div>
+        <div class="cargando-texto">Conexión Multidimensional...</div>
+    </div>
+
+    <!-- Iframe de la App. Llama a ocultarLoader() al finalizar su carga -->
+    <div class="contenedor-app">
+        <iframe 
+            src="https://script.google.com/macros/s/AKfycbxvbO8cMaXnchDcmUIKEF6EO5nKwvKeF0TwYin1Vvb21aiHavLnPzplAaT2JFDKnzEFHw/exec" 
+            onload="ocultarLoader()">
+        </iframe>
+    </div>
+
+    <script>
+        // Función principal para ocultar la pantalla de carga (mantiene tu lógica)
+        function ocultarLoader() {
+            const loader = document.getElementById('loader-wrapper');
+            loader.style.opacity = '0';
+            setTimeout(() => {
+                loader.style.visibility = 'hidden';
+                loader.style.display = 'none';
+            }, 600); // Espera a que termine la transición de CSS
+        }
+
+        // ==========================================
+        // LÓGICA DEL AVATAR 3D (Adaptado a Cargador)
+        // ==========================================
+        const canvasContainer = document.getElementById('jose-3d-canvas');
+        
+        // Crear renderizador
+        const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, powerPreference: "high-performance" });
+        renderer.setSize(200, 200); // Tamaño ajustado al contenedor (+25%)
+        renderer.setPixelRatio(window.devicePixelRatio);
+        canvasContainer.appendChild(renderer.domElement);
+
+        const scene = new THREE.Scene();
+        const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 100);
+        camera.position.set(0, 0, 22); // Alejado para que entren bien los anillos
+
+        const saturnGroup = new THREE.Group();
+        scene.add(saturnGroup);
+
+        const uniforms = { time: { value: 0.0 } };
+
+        // 1. Esfera Principal
+        const sphereGeo = new THREE.SphereGeometry(3.5, 64, 64);
+        const sphereMat = new THREE.ShaderMaterial({
+            uniforms: uniforms,
+            vertexShader: document.getElementById('sphereVertexShader').textContent,
+            fragmentShader: document.getElementById('sphereFragmentShader').textContent,
+            transparent: true
+        });
+        const sphereMesh = new THREE.Mesh(sphereGeo, sphereMat);
+
+        // 2. Anillo
+        const ringGeo = new THREE.RingGeometry(4.2, 7.5, 64);
+        const ringMat = new THREE.ShaderMaterial({
+            uniforms: uniforms,
+            vertexShader: document.getElementById('ringVertexShader').textContent,
+            fragmentShader: document.getElementById('ringFragmentShader').textContent,
+            transparent: true,
+            side: THREE.DoubleSide,
+            depthWrite: false
+        });
+        const ringMesh = new THREE.Mesh(ringGeo, ringMat);
+        ringMesh.rotation.x = -Math.PI / 2;
+
+        const orbGroup = new THREE.Group();
+        orbGroup.add(sphereMesh);
+        orbGroup.add(ringMesh);
+        orbGroup.rotation.x = 0.45;
+        orbGroup.rotation.z = -0.35;
+        saturnGroup.add(orbGroup);
+
+        // 3. Ojos del Avatar
+        const eyesGroup = new THREE.Group();
+        const eyeGeo = new THREE.SphereGeometry(0.40, 32, 16);
+        eyeGeo.scale(0.8, 1.8, 0.8);
+        const eyeMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+        
+        const leftEye = new THREE.Mesh(eyeGeo, eyeMat);
+        leftEye.position.set(-0.95, 0.4, 3.35); 
+        const rightEye = new THREE.Mesh(eyeGeo, eyeMat);
+        rightEye.position.set(0.95, 0.4, 3.35);
+        
+        eyesGroup.add(leftEye);
+        eyesGroup.add(rightEye);
+        saturnGroup.add(eyesGroup);
+
+        // 4. Puntos de Pensamiento (Indicador visual de "Cargando")
+        const thinkingDotsGroup = new THREE.Group();
+        
+        // Textura para los puntos de pensamiento
+        const canvas = document.createElement('canvas');
+        canvas.width = 64; canvas.height = 64;
+        const context = canvas.getContext('2d');
+        const gradient = context.createRadialGradient(32, 32, 0, 32, 32, 32);
+        gradient.addColorStop(0, 'rgba(255, 255, 255, 1)'); 
+        gradient.addColorStop(0.2, 'rgba(186, 230, 253, 0.8)'); 
+        gradient.addColorStop(1, 'rgba(14, 165, 233, 0)'); 
+        context.fillStyle = gradient;
+        context.fillRect(0, 0, 64, 64);
+        
+        const spriteMat = new THREE.SpriteMaterial({ 
+            map: new THREE.CanvasTexture(canvas), 
+            color: 0xffffff,
+            blending: THREE.AdditiveBlending,
+            transparent: true,
+            depthWrite: false
+        });
+
+        // Crear 3 puntos orbitando
+        const pivot1 = new THREE.Group();
+        const dot1 = new THREE.Sprite(spriteMat);
+        dot1.scale.set(2, 2, 2);
+        dot1.position.set(4.5, 0, 0);
+        pivot1.add(dot1);
+        thinkingDotsGroup.add(pivot1);
+
+        const pivot2 = new THREE.Group();
+        const dot2 = new THREE.Sprite(spriteMat);
+        dot2.scale.set(1.6, 1.6, 1.6);
+        dot2.position.set(0, 5, 0);
+        pivot2.add(dot2);
+        thinkingDotsGroup.add(pivot2);
+
+        const pivot3 = new THREE.Group();
+        const dot3 = new THREE.Sprite(spriteMat);
+        dot3.scale.set(2.5, 2.5, 2.5);
+        dot3.position.set(0, 0, 5.5);
+        pivot3.add(dot3);
+        thinkingDotsGroup.add(pivot3);
+
+        saturnGroup.add(thinkingDotsGroup);
+
+        // Variables de Animación
+        let targetEyeRotX = 0;
+        let targetEyeRotY = 0;
+        let eyeScaleY = 1.0;
+        let isBlinking = false;
+        
+        // Al estar en modo carga, forzamos la apariencia de pensamiento siempre encendida
+        let isThinking = true; 
+        let dotsScale = 1.0;
+
+        // Efecto parallax sutil con el ratón para dar vida durante la carga
+        document.addEventListener('mousemove', (e) => {
+            const centerX = window.innerWidth / 2;
+            const centerY = window.innerHeight / 2;
+            
+            const deltaX = e.clientX - centerX;
+            const deltaY = e.clientY - centerY;
+            
+            const normalizedX = Math.max(-1, Math.min(1, deltaX / (centerX * 1.5)));
+            const normalizedY = Math.max(-1, Math.min(1, deltaY / (centerY * 1.5)));
+
+            targetEyeRotY = normalizedX * 0.8; 
+            targetEyeRotX = normalizedY * 0.6;
+        });
+
+        // Parpadeo automático
+        function triggerBlink() {
+            if(!isBlinking) {
+                isBlinking = true;
+                eyeScaleY = 0.1; // Cierra el ojo
+                setTimeout(() => { eyeScaleY = 1.0; }, 120); // Abre el ojo
+                setTimeout(() => {
+                    isBlinking = false;
+                    triggerBlink();
+                }, Math.random() * 3000 + 1500); // Siguiente parpadeo aleatorio
+            }
+        }
+        triggerBlink();
+
+        // Bucle de renderizado principal
+        const clock = new THREE.Clock();
+
+        function animate() {
+            requestAnimationFrame(animate);
+            const time = clock.getElapsedTime();
+            uniforms.time.value = time;
+            
+            // Movimiento flotante sutil extra
+            let targetPosY = Math.sin(time * 0.8) * 0.1;
+            saturnGroup.position.y += (targetPosY - saturnGroup.position.y) * 0.02;
+            
+            // Rotaciones base
+            sphereMesh.rotation.y = time * 0.08;
+            ringMesh.rotation.z = -time * 0.03;  
+
+            // Suavizado del movimiento de los ojos
+            eyesGroup.rotation.y += (targetEyeRotY - eyesGroup.rotation.y) * 0.1;
+            eyesGroup.rotation.x += (targetEyeRotX - eyesGroup.rotation.x) * 0.1;
+
+            // Escala de los ojos para efecto de parpadeo y modo "pensando"
+            let targetEyeScaleY = isBlinking ? 0.1 : 0.25; // Ojos entrecerrados al estar cargando
+            
+            // Ajustar posición temporalmente al entrecerrar los ojos
+            leftEye.position.y = 0.4; 
+            rightEye.position.y = 0.4;
+            eyeGeo.scale(1, 1, 1);
+            
+            leftEye.scale.y += (targetEyeScaleY - leftEye.scale.y) * 0.4;
+            rightEye.scale.y += (targetEyeScaleY - rightEye.scale.y) * 0.4;
+
+            // Animación de los puntos rotando (Indicador de carga constante)
+            thinkingDotsGroup.visible = true;
+            thinkingDotsGroup.scale.set(dotsScale, dotsScale, dotsScale);
+
+            pivot1.rotation.y += 0.05; pivot1.rotation.z += 0.015;
+            pivot2.rotation.x -= 0.04; pivot2.rotation.z += 0.025;
+            pivot3.rotation.x += 0.03; pivot3.rotation.y -= 0.04;
+
+            // Render final
+            renderer.render(scene, camera);
+        }
+        
+        // Iniciar bucle
+        animate();
+    </script>
+</body>
+</html>
